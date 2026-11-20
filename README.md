@@ -1,11 +1,11 @@
 # usage-left
 
-A Claude Code mod that shows how much of your Claude usage limits you've used, as a small glass pill with a green ring, just above the message box. The pill matches the message box colour and is only as wide as the numbers.
+A Claude Code mod that shows how much of your Claude usage limits you've used, in the row just above the message box.
 
-- **Outer ring:** your current session (the 5-hour limit). **Inner ring:** this week.
-- Green, then amber at 80% used, red at 95%.
-- Hover the ring for the reset times.
-- A **Reset** link opens your usage page on claude.ai, where you can use a full limit reset if you have one.
+- **Left:** a ring for your current session (the 5-hour limit), its % used and when it resets.
+- **Right:** a ring for this week, its % used and when it resets, then a **Reset** link.
+- Rings go green, then amber, then red as you use more, with a soft glow.
+- **Reset** opens your usage page on claude.ai, where you can use a full limit reset if you have one.
 - A pop-up warns you once when a limit passes 80% and 95%.
 - `/usage-left` prints the numbers.
 

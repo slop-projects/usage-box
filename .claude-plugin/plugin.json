@@ -1,6 +1,6 @@
 {
   "name": "usage-left",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A small green ring above the prompt showing how much of your Claude session and weekly usage limits you've used, with a link to reset",
   "author": {
     "name": "slop-projects"
