@@ -1,6 +1,6 @@
 # usage-left
 
-A Claude Code mod that shows how much of your Claude usage limits you've used, as a small green ring in a slim row just above the message box.
+A Claude Code mod that shows how much of your Claude usage limits you've used, as a small glass pill with a green ring, just above the message box. The pill matches the message box colour and is only as wide as the numbers.
 
 - **Outer ring:** your current session (the 5-hour limit). **Inner ring:** this week.
 - Green, then amber at 80% used, red at 95%.

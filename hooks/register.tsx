@@ -35,32 +35,84 @@ function untilReset(resetsAt: string | undefined, now: number): string {
   return `resets in ${m}m`
 }
 
-const toneOf = (pct: number) => (pct >= 95 ? '#ef4444' : pct >= 80 ? '#f59e0b' : '#22c55e')
+// Soft colour that fades smoothly from calm green through amber to a muted red.
+function toneOf(pct: number): string {
+  const t = Math.min(100, Math.max(0, pct)) / 100
+  const hue =
+    t < 0.6 ? 150 - (t / 0.6) * 18 : t < 0.85 ? 132 - ((t - 0.6) / 0.25) * 92 : 40 - ((t - 0.85) / 0.15) * 32
+  return `hsl(${hue.toFixed(0)} 52% 58%)`
+}
 
-// Two thin concentric rings, like the app's own context circle:
-// outer = current 5-hour session, inner = this week.
-function ringSvg(session: Limit | undefined, week: Limit | undefined, tip: string): string {
-  const S = 22
-  const c = S / 2
-  const arc = (r: number, w: number, pct: number | undefined) => {
+const FONT = "-apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif"
+// Rough widths at 12px for laying text out inside the SVG.
+const widthOf = (text: string, bold = false) =>
+  [...text].reduce((w, ch) => w + (ch === ' ' ? 3.4 : ch === '·' ? 4 : /[0-9%]/.test(ch) ? 7 : 6.4), 0) *
+  (bold ? 1.04 : 1)
+
+// One glass pill: rings on the left, then the numbers, sized to fit exactly.
+function pillSvg(session: Limit | undefined, week: Limit | undefined, tip: string): { source: string; width: number; height: number } {
+  const H = 28
+  const R = H / 2
+  const cx = 16
+  const cy = H / 2
+
+  const ring = (r: number, w: number, pct: number | undefined) => {
     const len = 2 * Math.PI * r
     const used = pct === undefined ? 0 : Math.min(100, Math.max(0, pct)) / 100
-    const color = pct === undefined ? 'transparent' : toneOf(pct)
     return (
-      `<circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="rgba(140,140,140,0.28)" stroke-width="${w}"/>` +
-      `<circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="${color}" stroke-width="${w}" ` +
-      `stroke-linecap="round" stroke-dasharray="${(used * len).toFixed(2)} ${len.toFixed(2)}" ` +
-      `transform="rotate(-90 ${c} ${c})"/>`
+      `<circle class="track" cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke-width="${w}"/>` +
+      (pct === undefined
+        ? ''
+        : `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${toneOf(pct)}" stroke-width="${w}" ` +
+          `stroke-linecap="round" stroke-dasharray="${(used * len).toFixed(2)} ${len.toFixed(2)}" ` +
+          `transform="rotate(-90 ${cx} ${cy})"/>`)
     )
   }
+
+  // Text parts: [text, bold]
+  const parts: [string, boolean][] = []
+  if (session) parts.push([`${Math.round(session.percentUsed)}%`, true], [' session', false])
+  if (session && week) parts.push(['  ·  ', false])
+  if (week) parts.push([`${Math.round(week.percentUsed)}%`, true], [' week', false])
+
+  const textX = 31
+  const textW = parts.reduce((w, [t, b]) => w + widthOf(t, b), 0)
+  const W = Math.ceil(textX + textW + 13)
+  const spans = parts
+    .map(([t, b]) => `<tspan class="${b ? 'num' : 'dim'}">${t.replace(/ /g, '&#160;')}</tspan>`)
+    .join('')
   const esc = tip.replace(/&/g, '&amp;').replace(/</g, '&lt;')
-  return (
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${S}" height="${S}" viewBox="0 0 ${S} ${S}">` +
+
+  const source =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">` +
     `<title>${esc}</title>` +
-    arc(9, 2.6, session?.percentUsed) +
-    arc(5, 2.2, week?.percentUsed) +
+    `<style>` +
+    `.base{fill:#2b2b2b}.edge{stroke:rgba(255,255,255,.11)}.shine{stroke:rgba(255,255,255,.22)}` +
+    `.track{stroke:rgba(255,255,255,.12)}.num{fill:#ececec;font-weight:600}.dim{fill:#9a9a9a}` +
+    `@media (prefers-color-scheme: light){.base{fill:#f6f6f5}.edge{stroke:rgba(0,0,0,.09)}` +
+    `.shine{stroke:rgba(255,255,255,.9)}.track{stroke:rgba(0,0,0,.10)}.num{fill:#262626}.dim{fill:#7a7a7a}}` +
+    `</style>` +
+    `<defs>` +
+    `<linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">` +
+    `<stop offset="0" stop-color="#fff" stop-opacity=".13"/>` +
+    `<stop offset=".45" stop-color="#fff" stop-opacity=".04"/>` +
+    `<stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>` +
+    `<radialGradient id="glow" cx=".12" cy="0" r=".9">` +
+    `<stop offset="0" stop-color="#fff" stop-opacity=".10"/>` +
+    `<stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>` +
+    `</defs>` +
+    // body, glass sheen, soft glow, hairline edge, top highlight
+    `<rect class="base" x=".5" y=".5" width="${W - 1}" height="${H - 1}" rx="${R - 0.5}"/>` +
+    `<rect x=".5" y=".5" width="${W - 1}" height="${H - 1}" rx="${R - 0.5}" fill="url(#sheen)"/>` +
+    `<rect x=".5" y=".5" width="${W - 1}" height="${H - 1}" rx="${R - 0.5}" fill="url(#glow)"/>` +
+    `<rect class="edge" x=".5" y=".5" width="${W - 1}" height="${H - 1}" rx="${R - 0.5}" fill="none"/>` +
+    `<path class="shine" d="M ${R} 1.2 H ${W - R}" stroke-width="1" stroke-linecap="round" fill="none" opacity=".55"/>` +
+    ring(9, 2.4, session?.percentUsed) +
+    ring(5, 2, week?.percentUsed) +
+    `<text x="${textX}" y="${cy + 4.2}" font-family="${FONT}" font-size="12">${spans}</text>` +
     `</svg>`
-  )
+
+  return { source, width: W, height: H }
 }
 
 const summary = (list: Limit[], now: number) =>
@@ -121,9 +173,12 @@ export const register: Register = on => {
 
     const tip = summary(list, await $.clock.now())
     const { Box, Text, Link } = $.ui.resolve(e)
-    const words =
-      `Session ${session ? session.percentUsed : '–'}% used` +
-      (week ? ` · Week ${week.percentUsed}%` : '')
+    const words = [
+      session && `${Math.round(session.percentUsed)}% session`,
+      week && `${Math.round(week.percentUsed)}% week`,
+    ]
+      .filter(Boolean)
+      .join(' · ')
 
     if (e.surface === 'terminal') {
       return (
@@ -136,10 +191,10 @@ export const register: Register = on => {
     }
 
     const { Svg } = $.ui.resolve(e as typeof e & { surface: 'desktop' })
+    const pill = pillSvg(session, week, tip)
     return (
       <Box flexDirection="row" alignItems="center" justifyContent="flex-end" gap={1}>
-        <Svg source={ringSvg(session, week, tip)} alt={tip} width={22} height={22} isInteractive />
-        <Text dimColor>{words}</Text>
+        <Svg source={pill.source} alt={tip} width={pill.width} height={pill.height} isInteractive />
         <Link href={USAGE_PAGE} label="Reset" />
       </Box>
     )
