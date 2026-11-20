@@ -1,0 +1,13 @@
+{
+  "name": "usage-box",
+  "owner": {
+    "name": "slop-projects"
+  },
+  "plugins": [
+    {
+      "name": "usage-left",
+      "source": "./"
+    }
+  ],
+  "description": "A Claude Code mod that shows your usage limits as a small green ring."
+}

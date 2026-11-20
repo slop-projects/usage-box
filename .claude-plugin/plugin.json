@@ -1,0 +1,10 @@
+{
+  "name": "usage-left",
+  "version": "0.1.0",
+  "description": "A small green ring above the prompt showing how much of your Claude session and weekly usage limits you've used, with a link to reset",
+  "author": {
+    "name": "slop-projects"
+  },
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}
