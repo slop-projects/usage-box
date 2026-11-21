@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { Register, SessionRateLimit } from 'claude-code'
+import type { EngineInterface, Register, SessionRateLimit, Timer } from 'claude-code'
 
 import type { Limit } from '../types'
 
@@ -74,8 +74,75 @@ const summary = (list: Limit[], now: number) =>
   list.length === 0
     ? 'No usage reading yet. It arrives with Claude\'s next reply.'
     : list
-        .map(l => `${nameOf(l.kind)}: ${l.percentUsed}% used, ${untilReset(l.resetsAt, now)}`)
+        .map(l => `${nameOf(l.kind)}: ${Math.round(l.percentUsed)}% used, ${untilReset(l.resetsAt, now)}`)
         .join('\n')
+
+// Claude's own usage service (what /usage reads). The engine adds your login
+// itself; the mod never sees it.
+const USAGE_API = 'https://api.anthropic.com/api/oauth/usage'
+
+type Fresh = { limits: Limit[]; resetAvailable?: boolean }
+
+async function fetchFresh($: EngineInterface): Promise<Fresh | undefined> {
+  try {
+    const auth = await $.session.authorize()
+    if (!auth) return undefined
+    const res = await $.http.fetch(USAGE_API, {
+      auth: auth.handle,
+      headers: { 'anthropic-beta': 'oauth-2025-04-20' },
+    })
+    if (!res.ok) return undefined
+    const body = JSON.parse(res.text) as Record<string, unknown>
+    const limits: Limit[] = []
+    for (const kind of ['five_hour', 'seven_day']) {
+      const w = body[kind] as { utilization?: number; resets_at?: string } | null | undefined
+      if (w && typeof w.utilization === 'number') {
+        limits.push({
+          kind,
+          percentUsed: Math.round(w.utilization * 10) / 10,
+          resetsAt: w.resets_at ?? undefined,
+        })
+      }
+    }
+    return limits.length ? { limits } : undefined
+  } catch {
+    return undefined
+  }
+}
+
+// A window whose reset time has passed counts as fresh again.
+const settle = (list: Limit[], now: number): Limit[] =>
+  list.map(l =>
+    l.resetsAt && Date.parse(l.resetsAt) <= now ? { ...l, percentUsed: 0, resetsAt: undefined } : l,
+  )
+
+// One reading shared by every session on this computer, so they all agree.
+type Shared = { at: number; limits: Limit[] }
+const SHARED_KEY = 'latest'
+const FRESH_FOR = 10 * 60_000
+
+async function readShared($: EngineInterface, now: number): Promise<Limit[] | undefined> {
+  const v = (await $.store.get(SHARED_KEY)) as Shared | undefined
+  return v && Array.isArray(v.limits) && now - v.at < FRESH_FOR ? v.limits : undefined
+}
+
+async function refresh($: EngineInterface, fallback?: Limit[]) {
+  const now = await $.clock.now()
+  const fresh = await fetchFresh($)
+  let list: Limit[]
+  if (fresh) {
+    list = fresh.limits
+    await $.store.set(SHARED_KEY, { at: now, limits: list } satisfies Shared)
+  } else {
+    // The service could not be reached: use what another session saw lately,
+    // and only then this session's last reply.
+    list =
+      (await readShared($, now)) ?? fallback ?? toLimits((await $.session.usage()).rateLimits)
+  }
+  await update($, limits, () => settle(list, now))
+}
+
+let ticker: Timer | undefined
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -87,14 +154,16 @@ export const register: Register = on => {
       name: 'usage-left',
       description: 'Show how much of your usage limits is left',
     })
-    const u = await $.session.usage()
-    await update($, limits, () => toLimits(u.rateLimits))
+    await refresh($)
+    // Refresh every 30 seconds: fresh numbers, and the countdowns move on.
+    ticker?.cancel()
+    ticker = $.clock.every(30_000, () => refresh($))
     return next(e)
   })
 
   on('session.measure', async ($, e, next) => {
-    const list = toLimits(e.rateLimits)
-    await update($, limits, () => list)
+    await refresh($, toLimits(e.rateLimits))
+    const list = await read($, limits)
 
     // Warn once per window when it crosses 80% and 95% used.
     const now = await $.clock.now()
@@ -105,7 +174,7 @@ export const register: Register = on => {
         const id = `${l.kind}@${t}@${l.resetsAt ?? ''}`
         if (l.percentUsed >= t && !seen.includes(id)) {
           fresh.push(id)
-          $.ui.toast(`${nameOf(l.kind)}: ${l.percentUsed}% used (${untilReset(l.resetsAt, now)})`)
+          $.ui.toast(`${nameOf(l.kind)}: ${Math.round(l.percentUsed)}% used (${untilReset(l.resetsAt, now)})`)
         }
       }
     }
@@ -114,8 +183,8 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'usage-left' }, async $ => {
-    const list = toLimits((await $.session.usage()).rateLimits)
-    await update($, limits, () => list)
+    await refresh($)
+    const list = await read($, limits)
     return { text: `${summary(list, await $.clock.now())}\nFull limit reset: ${USAGE_PAGE}` }
   })
 
@@ -141,11 +210,13 @@ export const register: Register = on => {
         <Box flexDirection="row" gap={1}>
           <Text color={toneOf(session?.percentUsed ?? 0)}>◔</Text>
           <Text dimColor>{words}</Text>
-          <Link href={USAGE_PAGE} label="Reset" />
+          {list.some(l => l.percentUsed >= 80) && <Link href={USAGE_PAGE} label="Reset" />}
         </Box>
       )
     }
 
+    // Show Reset only when a limit is nearly used up and a reset would help.
+    const needsReset = list.some(l => l.percentUsed >= 80)
     const { Svg } = $.ui.resolve(e as typeof e & { surface: 'desktop' })
     const side = (l: Limit | undefined, label: string, key: string) =>
       l && (
@@ -162,7 +233,7 @@ export const register: Register = on => {
         {side(session, 'session', 'session') ?? <Box key="session" />}
         <Box key="right" flexDirection="row" alignItems="center" gap={2}>
           {side(week, 'week', 'week')}
-          <Link href={USAGE_PAGE} label="Reset" />
+          {needsReset && <Link href={USAGE_PAGE} label="Reset" />}
         </Box>
       </Box>
     )
